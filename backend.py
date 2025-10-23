@@ -1,38 +1,71 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Request
 import os, openai
+from databases import Database
+from sqlalchemy import create_engine, MetaData, Table, Column, String, Integer
+import uuid
 
-app = FastAPI()
-
-# Allow your iPhone to talk to this backend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-OPENAI_KEY = os.environ.get("OPENAI_KEY")
+# --- OpenAI setup ---
+OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 client = openai.OpenAI(api_key=OPENAI_KEY)
 
-BUDGET_EURO = 1.0
-COST_PER_JOKE = 0.00001
-used = 0
+# --- FastAPI app ---
+app = FastAPI()
 
+# --- SQLite database setup ---
+DATABASE_URL = "sqlite:///./sessions.db"
+database = Database(DATABASE_URL)
+metadata = MetaData()
+
+# Table to store sessions and jokes
+jokes_table = Table(
+    "jokes",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("session_id", String),
+    Column("joke_text", String),
+)
+
+engine = create_engine(DATABASE_URL)
+metadata.create_all(engine)
+
+# --- Startup / Shutdown ---
+@app.on_event("startup")
+async def startup():
+    await database.connect()
+
+@app.on_event("shutdown")
+async def shutdown():
+    await database.disconnect()
+
+# --- Joke endpoint ---
 @app.get("/joke")
-def get_joke():
-    global used
-    if used + COST_PER_JOKE > BUDGET_EURO:
-        return {"joke": "Budget exceeded 😅"}
-    
+async def get_joke(request: Request):
+    # Get session_id from cookie or generate a new one
+    session_id = request.cookies.get("session_id")
+    if not session_id:
+        session_id = str(uuid.uuid4())
+
+    # Get jokes already sent for this session
+    query = jokes_table.select().where(jokes_table.c.session_id == session_id)
+    existing_jokes = await database.fetch_all(query)
+    existing_texts = [j["joke_text"] for j in existing_jokes]
+
+    # Ask GPT for a new joke
+    prompt = "Tell me a short, funny joke that is different from these: " + ", ".join(existing_texts)
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": "You are a witty assistant who only tells short, funny jokes."},
-            {"role": "user", "content": "Tell me a short joke."}
-        ]
+            {"role": "system", "content": "You are a witty assistant who tells short jokes."},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.9
     )
-    
     joke_text = response.choices[0].message.content
-    used += COST_PER_JOKE
-    return {"joke": joke_text}
+
+    # Store the new joke in the database
+    await database.execute(
+        jokes_table.insert().values(session_id=session_id, joke_text=joke_text)
+    )
+
+    # Return joke + session_id so client can send it back next time
+    return {"joke": joke_text, "session_id": session_id}
