@@ -1,8 +1,7 @@
 from fastapi import FastAPI, Request
-import os, openai
+import os, openai, uuid
 from databases import Database
 from sqlalchemy import create_engine, MetaData, Table, Column, String, Integer
-import uuid
 
 # --- OpenAI setup ---
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
@@ -40,20 +39,21 @@ async def shutdown():
 # --- Joke endpoint ---
 @app.get("/joke")
 async def get_joke(request: Request):
-    session_id = request.cookies.get("session_id")
+    # Get session ID from header sent by iPhone app
+    session_id = request.headers.get("X-Session-ID")
     if not session_id:
         session_id = str(uuid.uuid4())
-        print(f"New session created: {session_id}")  # Debug
+        print(f"New session created: {session_id}")
 
-    # Get existing jokes
+    # Get existing jokes for this session
     query = jokes_table.select().where(jokes_table.c.session_id == session_id)
     existing_jokes = await database.fetch_all(query)
     existing_texts = [j["joke_text"] for j in existing_jokes]
-    print(f"Session {session_id} existing jokes: {existing_texts}")  # Debug
+    print(f"Session {session_id} existing jokes: {existing_texts}")
 
-    # GPT prompt
+    # GPT prompt avoiding repeated jokes
     prompt = "Tell me a short, funny joke that is different from these: " + ", ".join(existing_texts)
-    print(f"Prompt sent to GPT: {prompt}")  # Debug
+    print(f"Prompt sent to GPT: {prompt}")
 
     response = client.chat.completions.create(
         model="gpt-4o-mini",
@@ -64,13 +64,12 @@ async def get_joke(request: Request):
         temperature=0.9
     )
     joke_text = response.choices[0].message.content
-    print(f"GPT returned joke: {joke_text}")  # Debug
+    print(f"GPT returned joke: {joke_text}")
 
     # Store joke
     await database.execute(
         jokes_table.insert().values(session_id=session_id, joke_text=joke_text)
     )
-    print(f"Stored joke for session {session_id}")  # Debug
+    print(f"Stored joke for session {session_id}")
 
     return {"joke": joke_text, "session_id": session_id}
-
