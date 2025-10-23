@@ -40,18 +40,21 @@ async def shutdown():
 # --- Joke endpoint ---
 @app.get("/joke")
 async def get_joke(request: Request):
-    # Get session_id from cookie or generate a new one
     session_id = request.cookies.get("session_id")
     if not session_id:
         session_id = str(uuid.uuid4())
+        print(f"New session created: {session_id}")  # Debug
 
-    # Get jokes already sent for this session
+    # Get existing jokes
     query = jokes_table.select().where(jokes_table.c.session_id == session_id)
     existing_jokes = await database.fetch_all(query)
     existing_texts = [j["joke_text"] for j in existing_jokes]
+    print(f"Session {session_id} existing jokes: {existing_texts}")  # Debug
 
-    # Ask GPT for a new joke
+    # GPT prompt
     prompt = "Tell me a short, funny joke that is different from these: " + ", ".join(existing_texts)
+    print(f"Prompt sent to GPT: {prompt}")  # Debug
+
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
@@ -61,11 +64,13 @@ async def get_joke(request: Request):
         temperature=0.9
     )
     joke_text = response.choices[0].message.content
+    print(f"GPT returned joke: {joke_text}")  # Debug
 
-    # Store the new joke in the database
+    # Store joke
     await database.execute(
         jokes_table.insert().values(session_id=session_id, joke_text=joke_text)
     )
+    print(f"Stored joke for session {session_id}")  # Debug
 
-    # Return joke + session_id so client can send it back next time
     return {"joke": joke_text, "session_id": session_id}
+
