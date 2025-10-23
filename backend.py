@@ -52,7 +52,7 @@ async def get_joke(request: Request):
     print(f"Session {session_id} existing jokes: {existing_texts}")
 
     # GPT prompt avoiding repeated jokes
-    prompt = "Tell me a short, funny joke about cats that is different from these: " + ", ".join(existing_texts)
+    prompt = "Escribe un chisme corto con la palabra 'michi' (refiriendos a gatos). Tiene que ser diferente de los siguientes: " + ", ".join(existing_texts)
     print(f"Prompt sent to GPT: {prompt}")
 
     response = client.chat.completions.create(
